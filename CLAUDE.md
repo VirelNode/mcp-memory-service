@@ -12,6 +12,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with th
 - **`.claude/directives/memory-tagging.md`** - MANDATORY: Always tag memories with `mcp-memory-service` as first tag
 - **`.claude/directives/README.md`** - Additional topic-specific directives
 
+## ⚠️ Critical: Embedding Model Configuration
+
+**The embedding model MUST match your database schema!**
+
+| Database Dimension | Embedding Model | Set Via |
+|-------------------|-----------------|---------|
+| **1024** (recommended) | `BAAI/bge-large-en-v1.5` | `export MCP_EMBEDDING_MODEL='BAAI/bge-large-en-v1.5'` |
+| 768 | `BAAI/bge-base-en-v1.5` | `export MCP_EMBEDDING_MODEL='BAAI/bge-base-en-v1.5'` |
+| 384 | `all-MiniLM-L6-v2` | `export MCP_EMBEDDING_MODEL='all-MiniLM-L6-v2'` |
+
+**v8.69.0+**: Startup validation will **fail fast** with clear instructions if dimensions mismatch.
+
+Use `scripts/start-memory-service.sh` for correct defaults.
+
 ## ⚡ Quick Update & Restart (RECOMMENDED)
 
 **ALWAYS use these scripts after git pull to update dependencies and restart server:**
@@ -38,7 +52,7 @@ See [Essential Commands](#essential-commands) for options (--no-restart, --force
 
 MCP Memory Service is a Model Context Protocol server providing semantic memory and persistent storage for Claude Desktop with SQLite-vec, Cloudflare, and Hybrid storage backends.
 
-> **🆕 v8.68.0**: **Update & Restart Automation - Developer Experience Breakthrough** - One-command workflow for all platforms (scripts/update_and_restart.sh for macOS/Linux, PowerShell script for Windows). 87% time reduction (15+ min → <2 min), auto-detects conflicts, verifies editable install, prevents stale imports. See [CHANGELOG.md](CHANGELOG.md) for full version history.
+> **🆕 v8.69.0**: **Temporal Awareness & Embedding Validation** - `/api/time` endpoint for real-world time, `current_time` MCP tool, startup validation prevents dimension mismatches, default model changed to BGE-large (1024 dims). See [CHANGELOG.md](CHANGELOG.md) for full version history.
 >
 > **Note**: When releasing new versions, update this line with current version + brief description. Use `.claude/agents/github-release-manager.md` agent for complete release workflow.
 
@@ -78,6 +92,7 @@ MCP Memory Service is a Model Context Protocol server providing semantic memory 
 | | `scripts/service/memory_service_manager.sh status` | Check service status |
 | **Debug** | `curl http://127.0.0.1:8000/api/health` | Health check |
 | | `npx @modelcontextprotocol/inspector uv run memory server` | MCP Inspector |
+| **Temporal** | `curl http://127.0.0.1:8000/api/time` | Get current real-world time (v8.69.0+) |
 
 See [scripts/README.md](scripts/README.md) for complete command reference.
 

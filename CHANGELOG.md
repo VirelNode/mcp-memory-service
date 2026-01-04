@@ -10,6 +10,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [Unreleased]
 
+## [8.69.0] - 2026-01-04
+
+### Added
+- **Temporal Awareness**
+  - `GET /api/time` - Real-world time endpoint for AI temporal awareness
+  - Returns: iso, human-readable, date, time, timezone, unix timestamp, day_of_week, hour_24
+  - `current_time` MCP tool for direct time queries
+
+- **Embedding Dimension Validation** (CRITICAL FIX)
+  - Startup validation prevents silent dimension mismatch failures
+  - `_get_database_embedding_dimension()` - Queries existing vec table schema
+  - `_validate_embedding_dimensions()` - Compares model vs database, fails fast with clear error
+  - Prevents cryptic "Dimension mismatch" errors during memory operations
+
+- **Startup Script**
+  - `scripts/start-memory-service.sh` - Production-ready startup with all env vars
+  - Sets correct embedding model, port, OAuth settings automatically
+
+### Changed
+- **Default Embedding Model**: Changed from `all-MiniLM-L6-v2` (384 dims) to `BAAI/bge-large-en-v1.5` (1024 dims)
+  - Most deployments use 1024-dim databases
+  - Validation will catch any mismatches and provide clear instructions
+
+### Fixed
+- **CRITICAL: Embedding Dimension Mismatch**
+  - **Problem**: Service silently loaded wrong model (384 dims) but database expected 1024 dims
+  - **Symptom**: All memory store operations failed with "Dimension mismatch" error
+  - **Solution**: Startup validation now fails immediately with clear fix instructions
+
 ## [8.68.0] - 2026-01-03
 
 ### Added
