@@ -41,6 +41,18 @@ else:
 router = APIRouter()
 
 
+class TimeResponse(BaseModel):
+    """Current time response for temporal awareness."""
+    iso: str
+    human: str
+    date: str
+    time: str
+    timezone: str
+    unix: str
+    day_of_week: str
+    hour_24: str
+
+
 class HealthResponse(BaseModel):
     """Basic health check response."""
     status: str
@@ -73,6 +85,24 @@ async def health_check():
         version=__version__,
         timestamp=datetime.now(timezone.utc).isoformat(),
         uptime_seconds=time.time() - _startup_time
+    )
+
+
+@router.get("/time", response_model=TimeResponse)
+async def get_current_time():
+    """Get current real-world time for temporal awareness."""
+    now = datetime.now()
+    tz_name = time.tzname[0] if time.daylight == 0 else time.tzname[1]
+
+    return TimeResponse(
+        iso=now.isoformat(),
+        human=now.strftime("%A, %B %d, %Y at %I:%M:%S %p"),
+        date=now.strftime("%Y-%m-%d"),
+        time=now.strftime("%I:%M:%S %p"),
+        timezone=tz_name,
+        unix=str(int(now.timestamp())),
+        day_of_week=now.strftime("%A"),
+        hour_24=now.strftime("%H:%M")
     )
 
 
