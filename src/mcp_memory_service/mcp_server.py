@@ -20,6 +20,7 @@ import os
 import socket
 import sys
 import time
+from datetime import datetime
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -271,6 +272,35 @@ class StoreMemoryFailure(TypedDict):
 # =============================================================================
 # CORE MEMORY OPERATIONS
 # =============================================================================
+
+@mcp.tool()
+async def current_time() -> Dict[str, str]:
+    """Get the current real-world time.
+
+    Returns the current date and time in multiple formats for temporal awareness.
+    Use this whenever you need to know what time it is right now.
+
+    Returns:
+        Dictionary with formatted time strings including:
+        - iso: ISO 8601 format
+        - human: Human-readable format with day of week
+        - date: Just the date
+        - time: Just the time
+        - timezone: Current timezone
+        - unix: Unix timestamp
+    """
+    now = datetime.now()
+
+    return {
+        "iso": now.isoformat(),
+        "human": now.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z").strip(),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%I:%M:%S %p"),
+        "timezone": time.tzname[0] if time.daylight == 0 else time.tzname[1],
+        "unix": str(int(now.timestamp())),
+        "day_of_week": now.strftime("%A"),
+        "hour_24": now.strftime("%H:%M")
+    }
 
 @mcp.tool()
 async def store_memory(

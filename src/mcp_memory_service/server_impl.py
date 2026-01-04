@@ -1194,6 +1194,15 @@ class MemoryServer:
             try:
                 tools = [
                     types.Tool(
+                        name="current_time",
+                        description="Get the current real-world time. Returns date, time, day of week, and timezone for temporal awareness.",
+                        inputSchema={
+                            "type": "object",
+                            "properties": {},
+                            "required": []
+                        }
+                    ),
+                    types.Tool(
                         name="store_memory",
                         description="""Store new information with optional tags.
 
@@ -2151,7 +2160,9 @@ class MemoryServer:
                 if MCP_CLIENT == 'lm_studio':
                     print(f"Processing tool: {name}", file=sys.stdout, flush=True)
                 
-                if name == "store_memory":
+                if name == "current_time":
+                    return await self.handle_current_time(arguments)
+                elif name == "store_memory":
                     return await self.handle_store_memory(arguments)
                 elif name == "retrieve_memory":
                     return await self.handle_retrieve_memory(arguments)
@@ -2238,6 +2249,24 @@ class MemoryServer:
                 logger.error(error_msg)
                 print(f"ERROR in tool execution: {error_msg}", file=sys.stderr, flush=True)
                 return [types.TextContent(type="text", text=f"Error: {str(e)}")]
+
+    async def handle_current_time(self, arguments: dict) -> List[types.TextContent]:
+        """Return the current real-world time for temporal awareness."""
+        import time as time_module
+        now = datetime.now()
+
+        result = {
+            "iso": now.isoformat(),
+            "human": now.strftime("%A, %B %d, %Y at %I:%M:%S %p").strip(),
+            "date": now.strftime("%Y-%m-%d"),
+            "time": now.strftime("%I:%M:%S %p"),
+            "timezone": time_module.tzname[0] if time_module.daylight == 0 else time_module.tzname[1],
+            "unix": str(int(now.timestamp())),
+            "day_of_week": now.strftime("%A"),
+            "hour_24": now.strftime("%H:%M")
+        }
+
+        return [types.TextContent(type="text", text=json.dumps(result, indent=2))]
 
     async def handle_store_memory(self, arguments: dict) -> List[types.TextContent]:
         """Store new memory (delegates to handler)."""
