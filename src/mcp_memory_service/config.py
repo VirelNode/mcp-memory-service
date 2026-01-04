@@ -555,7 +555,9 @@ else:
     DATABASE_PATH = os.path.join(BASE_DIR, 'memory_http.db')
 
 # Embedding model configuration
-EMBEDDING_MODEL_NAME = os.getenv('MCP_EMBEDDING_MODEL', 'all-MiniLM-L6-v2')
+# IMPORTANT: Default to BGE-large (1024 dims) as most deployments use this.
+# The startup validation will catch mismatches and provide clear instructions.
+EMBEDDING_MODEL_NAME = os.getenv('MCP_EMBEDDING_MODEL', 'BAAI/bge-large-en-v1.5')
 
 # =============================================================================
 # Document Processing Configuration (Semtools Integration)

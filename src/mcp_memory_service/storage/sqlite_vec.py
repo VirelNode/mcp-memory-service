@@ -486,6 +486,8 @@ SOLUTIONS:
                         logger.warning(f"Migration check for deleted_at (non-fatal): {e}")
 
                     await self._initialize_embedding_model()
+                    # CRITICAL: Validate embedding dimensions match before proceeding
+                    self._validate_embedding_dimensions()
                     self._initialized = True
                     logger.info(f"SQLite-vec storage initialized successfully (existing database) with embedding dimension: {self.embedding_dimension}")
                     return
@@ -821,6 +823,65 @@ SOLUTIONS:
                 "Falling back to pure-Python hash embeddings due to embedding init failure (quality reduced)."
             )
             self.embedding_model = _HashEmbeddingModel(self.embedding_dimension)
+
+    def _get_database_embedding_dimension(self) -> Optional[int]:
+        """Query the database to get the existing vec table's embedding dimension.
+
+        Returns:
+            The dimension if found, None if table doesn't exist or can't be determined.
+        """
+        try:
+            cursor = self.conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='memory_embeddings'"
+            )
+            row = cursor.fetchone()
+            if row and row[0]:
+                # Parse: CREATE VIRTUAL TABLE memory_embeddings USING vec0(content_embedding FLOAT[1024] ...)
+                import re
+                match = re.search(r'FLOAT\[(\d+)\]', row[0])
+                if match:
+                    return int(match.group(1))
+        except Exception as e:
+            logger.warning(f"Could not determine database embedding dimension: {e}")
+        return None
+
+    def _validate_embedding_dimensions(self) -> None:
+        """Validate that the model's embedding dimension matches the database schema.
+
+        Raises:
+            RuntimeError: If dimensions don't match, with clear instructions to fix.
+        """
+        db_dimension = self._get_database_embedding_dimension()
+        if db_dimension is None:
+            # New database or can't determine - will be created with model's dimension
+            return
+
+        model_dimension = self.embedding_dimension
+        if db_dimension != model_dimension:
+            raise RuntimeError(
+                f"\n{'='*70}\n"
+                f"❌ EMBEDDING DIMENSION MISMATCH\n"
+                f"{'='*70}\n"
+                f"Database expects:  {db_dimension} dimensions\n"
+                f"Model produces:    {model_dimension} dimensions\n"
+                f"Current model:     {self.embedding_model_name}\n"
+                f"\n"
+                f"This will cause ALL memory operations to fail!\n"
+                f"\n"
+                f"🔧 TO FIX: Set the correct embedding model:\n"
+                f"\n"
+                f"   For {db_dimension} dimensions, use one of:\n"
+                f"   - BAAI/bge-large-en-v1.5 (1024 dims) - recommended\n"
+                f"   - all-MiniLM-L6-v2 (384 dims)\n"
+                f"   - BAAI/bge-base-en-v1.5 (768 dims)\n"
+                f"\n"
+                f"   Set via environment variable:\n"
+                f"   export MCP_EMBEDDING_MODEL='BAAI/bge-large-en-v1.5'\n"
+                f"\n"
+                f"   Or in your startup script/docker-compose.\n"
+                f"{'='*70}"
+            )
+        logger.info(f"✅ Embedding dimensions validated: model ({model_dimension}) matches database ({db_dimension})")
 
     def _get_docker_network_help(self) -> str:
         """Get Docker-specific network troubleshooting help."""
