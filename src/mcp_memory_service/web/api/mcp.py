@@ -8,6 +8,7 @@ to directly access memory operations using the MCP standard.
 import asyncio
 import json
 import logging
+import re
 from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
 from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict
 
 from ..dependencies import get_storage
 from ...utils.hashing import generate_content_hash
+from ...utils.time_parser import parse_time_expression
 from ...config import OAUTH_ENABLED
 
 # Import OAuth dependencies only when needed
@@ -302,20 +304,60 @@ async def handle_tool_call(storage, tool_name: str, arguments: Dict[str, Any]) -
         query = arguments.get("query")
         n_results = arguments.get("n_results", 5)
 
-        # Use storage recall_memory method which handles time expressions
-        memories = await storage.recall_memory(query=query, n_results=n_results)
+        # Recency keyword detection for hybrid scoring
+        # Pure recency patterns - skip semantic search entirely
+        pure_recency_patterns = re.compile(
+            r'^(most\s+recent|latest|newest|what\'?s?\s+new|show\s+me\s+recent)\b',
+            re.IGNORECASE
+        )
+
+        # Recency keywords - boost recency weight
+        recency_keywords = re.compile(
+            r'\b(most\s+recent|latest|newest|just\s+now|last\s+saved|'
+            r'what\s+happened|what\s+did\s+we|most\s+recently|'
+            r'earlier\s+today|a\s+moment\s+ago|just\s+created)\b',
+            re.IGNORECASE
+        )
+
+        # Parse time expressions from query (returns tuple)
+        start_timestamp, end_timestamp = parse_time_expression(query)
+
+        # Determine if pure time-based retrieval (no semantic search)
+        use_pure_time_retrieval = False
+        if pure_recency_patterns.search(query):
+            remaining = pure_recency_patterns.sub('', query).strip()
+            if not remaining or re.match(r'^(memory|memories|stuff|things?)?$', remaining, re.IGNORECASE):
+                use_pure_time_retrieval = True
+
+        # Set recency weight based on query intent
+        recency_weight = 0.5 if recency_keywords.search(query) else 0.15
+
+        # For pure recency queries, skip semantic search
+        semantic_query = None if use_pure_time_retrieval else query
+
+        # Use enhanced recall() with recency weighting
+        results = await storage.recall(
+            query=semantic_query,
+            n_results=n_results,
+            start_timestamp=start_timestamp,
+            end_timestamp=end_timestamp,
+            recency_weight=recency_weight
+        )
 
         return {
             "results": [
                 {
-                    "content": m.content,
-                    "content_hash": m.content_hash,
-                    "tags": m.tags,
-                    "created_at": m.created_at_iso
+                    "content": r.memory.content,
+                    "content_hash": r.memory.content_hash,
+                    "tags": r.memory.tags,
+                    "created_at": r.memory.created_at_iso,
+                    "relevance_score": r.relevance_score
                 }
-                for m in memories
+                for r in results
             ],
-            "total_found": len(memories)
+            "total_found": len(results),
+            "recency_weighted": recency_weight > 0.15,
+            "pure_time_retrieval": use_pure_time_retrieval
         }
 
     elif tool_name == "search_by_tag":
