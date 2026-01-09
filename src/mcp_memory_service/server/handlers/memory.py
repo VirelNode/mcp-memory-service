@@ -600,11 +600,40 @@ async def handle_recall_memory(server, arguments: dict) -> List[types.TextConten
 
     This handler parses natural language time expressions from the query,
     extracts time ranges, and combines them with optional semantic search.
+    Supports recency-weighted scoring for queries emphasizing recent memories.
     """
     from ...utils.time_parser import extract_time_expression, parse_time_expression
+    import re
 
     query = arguments.get("query", "")
     n_results = arguments.get("n_results", 5)
+
+    # Detect recency keywords to adjust retrieval strategy
+    # Strong recency patterns = user wants newest, not semantically similar
+    pure_recency_patterns = re.compile(
+        r'^(most\s+recent|latest|newest|what\'?s?\s+new|show\s+me\s+recent)\b',
+        re.IGNORECASE
+    )
+    # Moderate recency patterns = boost recency but still use semantic
+    recency_keywords = re.compile(
+        r'\b(most\s+recent|latest|newest|just\s+now|last\s+saved|'
+        r'what\s+happened|what\s+did\s+we|most\s+recently|'
+        r'earlier\s+today|a\s+moment\s+ago|just\s+created)\b',
+        re.IGNORECASE
+    )
+
+    # If query starts with pure recency pattern and has little other content,
+    # use time-based retrieval instead of semantic search
+    use_pure_time_retrieval = False
+    if pure_recency_patterns.search(query):
+        # Remove the recency pattern and see what's left
+        remaining = pure_recency_patterns.sub('', query).strip()
+        # If only "memory/memories" or nothing remains, use pure time retrieval
+        if not remaining or re.match(r'^(memory|memories|stuff|things?)?$', remaining, re.IGNORECASE):
+            use_pure_time_retrieval = True
+            logger.info(f"Detected pure recency query, will use time-based retrieval")
+
+    recency_weight = 0.5 if recency_keywords.search(query) else 0.15
 
     if not query:
         return [types.TextContent(type="text", text="Error: Query is required")]
@@ -647,13 +676,20 @@ async def handle_recall_memory(server, arguments: dict) -> List[types.TextConten
         # we should perform time-based retrieval only
         semantic_query = cleaned_query.strip() if cleaned_query.strip() else None
 
+        # Override to pure time-based retrieval if detected as recency-only query
+        if use_pure_time_retrieval:
+            semantic_query = None
+            logger.info("Using pure time-based retrieval for recency query")
+
         # Use the enhanced recall method that combines semantic search with time filtering,
         # or just time filtering if no semantic query
+        # Pass recency_weight to enable hybrid scoring (semantic + recency)
         results = await storage.recall(
             query=semantic_query,
             n_results=n_results,
             start_timestamp=start_timestamp,
-            end_timestamp=end_timestamp
+            end_timestamp=end_timestamp,
+            recency_weight=recency_weight
         )
 
         if not results:

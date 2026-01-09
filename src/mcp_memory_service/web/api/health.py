@@ -16,11 +16,14 @@
 Health check endpoints for the HTTP interface.
 """
 
+import logging
 import time
 import platform
 import psutil
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone
-from typing import Dict, Any, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -51,6 +54,18 @@ class TimeResponse(BaseModel):
     unix: str
     day_of_week: str
     hour_24: str
+
+
+class SessionResponse(BaseModel):
+    """Current session information for temporal awareness."""
+    session_number: int
+    session_start: str
+    session_start_human: str
+    elapsed_seconds: int
+    elapsed_human: str
+    current_time: str
+    current_time_human: str
+    gap_from_previous: Optional[str] = None
 
 
 class HealthResponse(BaseModel):
@@ -103,6 +118,102 @@ async def get_current_time():
         unix=str(int(now.timestamp())),
         day_of_week=now.strftime("%A"),
         hour_24=now.strftime("%H:%M")
+    )
+
+
+def format_elapsed_time(seconds: int) -> str:
+    """Format elapsed time in human-readable format."""
+    if seconds < 60:
+        return f"{seconds} seconds"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes} minute{'s' if minutes != 1 else ''}"
+    else:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        if minutes > 0:
+            return f"{hours} hour{'s' if hours != 1 else ''} {minutes} min"
+        return f"{hours} hour{'s' if hours != 1 else ''}"
+
+
+@router.get("/session", response_model=SessionResponse)
+async def get_current_session(
+    storage: MemoryStorage = Depends(get_storage)
+):
+    """Get current Claude Code session information for temporal awareness.
+
+    Returns session number, start time, and elapsed duration.
+    Useful for Claude to know how long the current conversation has been running.
+    """
+    now = datetime.now()
+
+    # Search for the most recent session-start memory
+    try:
+        results = await storage.search_by_tags(
+            tags=["session-start"],
+            operation="OR"
+        )
+
+        if results and len(results) > 0:
+            # Sort by created_at descending and take the most recent
+            sorted_results = sorted(results, key=lambda x: x.created_at if hasattr(x, 'created_at') else 0, reverse=True)
+            session_memory = sorted_results[0]
+
+            # Handle both dict and Memory object formats
+            content = session_memory.content if hasattr(session_memory, 'content') else session_memory.get('content', '')
+
+            # Parse session metadata from content
+            session_number = 1
+            session_start = None
+            gap_from_previous = None
+
+            for line in content.split('\n'):
+                if line.startswith('Session #'):
+                    try:
+                        session_number = int(line.replace('Session #', '').strip())
+                    except ValueError:
+                        pass
+                elif line.startswith('Started:'):
+                    session_start = line.replace('Started:', '').strip()
+                elif line.startswith('Gap from previous:'):
+                    gap_from_previous = line.replace('Gap from previous:', '').strip()
+
+            # Calculate elapsed time (using UTC for comparison)
+            elapsed_seconds = 0
+            if session_start:
+                try:
+                    # Parse session start time (stored in UTC with Z suffix)
+                    start_dt = datetime.fromisoformat(session_start.replace('Z', '+00:00'))
+                    # Get current time in UTC for comparison
+                    now_utc = datetime.now(timezone.utc)
+                    elapsed_seconds = int((now_utc - start_dt).total_seconds())
+                except Exception:
+                    pass
+
+            return SessionResponse(
+                session_number=session_number,
+                session_start=session_start or now.isoformat(),
+                session_start_human=datetime.fromisoformat(session_start).strftime("%I:%M %p") if session_start else now.strftime("%I:%M %p"),
+                elapsed_seconds=elapsed_seconds,
+                elapsed_human=format_elapsed_time(elapsed_seconds),
+                current_time=now.isoformat(),
+                current_time_human=now.strftime("%A, %B %d, %Y at %I:%M:%S %p"),
+                gap_from_previous=gap_from_previous
+            )
+
+    except Exception as e:
+        logger.warning(f"Could not retrieve session info: {e}")
+
+    # Return default response if no session found
+    return SessionResponse(
+        session_number=0,
+        session_start=now.isoformat(),
+        session_start_human=now.strftime("%I:%M %p"),
+        elapsed_seconds=0,
+        elapsed_human="Just started",
+        current_time=now.isoformat(),
+        current_time_human=now.strftime("%A, %B %d, %Y at %I:%M:%S %p"),
+        gap_from_previous=None
     )
 
 

@@ -327,9 +327,10 @@ class HTTPClientStorage(MemoryStorage):
         logger.warning("Update memory metadata not supported via HTTP client yet")
         return False, "Update memory metadata not supported via HTTP client yet"
     
-    async def recall(self, query: Optional[str] = None, n_results: int = 5, start_timestamp: Optional[float] = None, end_timestamp: Optional[float] = None) -> List[MemoryQueryResult]:
+    async def recall(self, query: Optional[str] = None, n_results: int = 5, start_timestamp: Optional[float] = None, end_timestamp: Optional[float] = None, recency_weight: float = 0.15) -> List[MemoryQueryResult]:
         """
         Retrieve memories with time filtering and optional semantic search via HTTP API.
+        Note: recency_weight is accepted for API compatibility but handled by the remote server.
         """
         if not self._initialized or not self.session:
             logger.error("HTTP client not initialized")

@@ -2053,18 +2053,20 @@ SOLUTIONS:
         # Return JSON string representation of the array
         return json.dumps(tags)
     
-    async def recall(self, query: Optional[str] = None, n_results: int = 5, start_timestamp: Optional[float] = None, end_timestamp: Optional[float] = None) -> List[MemoryQueryResult]:
+    async def recall(self, query: Optional[str] = None, n_results: int = 5, start_timestamp: Optional[float] = None, end_timestamp: Optional[float] = None, recency_weight: float = 0.15) -> List[MemoryQueryResult]:
         """
         Retrieve memories with combined time filtering and optional semantic search.
-        
+
         Args:
             query: Optional semantic search query. If None, only time filtering is applied.
             n_results: Maximum number of results to return.
             start_timestamp: Optional start time for filtering.
             end_timestamp: Optional end time for filtering.
-            
+            recency_weight: Weight for recency in hybrid scoring (0.0 to 1.0).
+                           0.0 = pure semantic, 1.0 = pure recency. Default 0.15.
+
         Returns:
-            List of MemoryQueryResult objects.
+            List of MemoryQueryResult objects sorted by hybrid score (semantic + recency).
         """
         try:
             if not self.conn:
@@ -2095,6 +2097,9 @@ SOLUTIONS:
                     query_embedding = self._generate_embedding(query)
                     
                     # Build SQL query with time filtering
+                    # Over-fetch when using recency weighting to ensure recent memories are in candidate set
+                    fetch_k = n_results * 3 if recency_weight > 0 else n_results
+
                     base_query = '''
                         SELECT m.content_hash, m.content, m.tags, m.memory_type, m.metadata,
                                m.created_at, m.updated_at, m.created_at_iso, m.updated_at_iso,
@@ -2106,14 +2111,14 @@ SOLUTIONS:
                             WHERE content_embedding MATCH ? AND k = ?
                         ) e ON m.id = e.rowid
                     '''
-                    
+
                     if time_where:
                         base_query += f" WHERE {time_where}"
-                    
+
                     base_query += " ORDER BY e.distance"
-                    
-                    # Prepare parameters: embedding, limit, then time filter params
-                    query_params = [serialize_float32(query_embedding), n_results] + params
+
+                    # Prepare parameters: embedding, fetch_k (over-fetch for recency weighting), then time filter params
+                    query_params = [serialize_float32(query_embedding), fetch_k] + params
                     
                     cursor = self.conn.execute(base_query, query_params)
                     
@@ -2155,6 +2160,55 @@ SOLUTIONS:
                             continue
                     
                     logger.info(f"Retrieved {len(results)} memories for semantic query with time filter")
+
+                    # Apply recency weighting if enabled and we have results
+                    if recency_weight > 0 and results:
+                        import time as time_module
+                        now = time_module.time()
+
+                        # Calculate recency scores using exponential decay
+                        # Half-life of 48 hours - memories older than 2 days get significantly less boost
+                        half_life_seconds = 48 * 3600  # 48 hours
+
+                        for result in results:
+                            created_at = result.memory.created_at
+                            if created_at:
+                                # Handle both float timestamp and ISO string
+                                if isinstance(created_at, str):
+                                    try:
+                                        from datetime import datetime
+                                        dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                                        age_seconds = now - dt.timestamp()
+                                    except:
+                                        age_seconds = half_life_seconds  # Default to half-life if parsing fails
+                                else:
+                                    age_seconds = now - float(created_at)
+
+                                # Exponential decay: score = 2^(-age/half_life)
+                                # At age=0: score=1.0, at age=half_life: score=0.5, at age=2*half_life: score=0.25
+                                import math
+                                recency_score = math.pow(2, -age_seconds / half_life_seconds)
+                            else:
+                                recency_score = 0.5  # Default for memories without timestamps
+
+                            # Compute hybrid score
+                            semantic_score = result.relevance_score or 0.5
+                            hybrid_score = (1 - recency_weight) * semantic_score + recency_weight * recency_score
+
+                            # Update the result with hybrid score
+                            result.relevance_score = hybrid_score
+                            if result.debug_info:
+                                result.debug_info['semantic_score'] = semantic_score
+                                result.debug_info['recency_score'] = recency_score
+                                result.debug_info['recency_weight'] = recency_weight
+
+                        # Re-sort by hybrid score (highest first)
+                        results.sort(key=lambda r: r.relevance_score or 0, reverse=True)
+
+                        # Truncate to requested n_results after re-ranking
+                        results = results[:n_results]
+                        logger.info(f"Applied recency weighting (weight={recency_weight}), re-sorted and truncated to {n_results} results")
+
                     return results
                     
                 except Exception as query_error:

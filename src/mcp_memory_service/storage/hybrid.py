@@ -1559,7 +1559,7 @@ class HybridMemoryStorage(MemoryStorage):
         """
         return await self.primary.get_memory_timestamps(days)
 
-    async def recall(self, query: Optional[str] = None, n_results: int = 5, start_timestamp: Optional[float] = None, end_timestamp: Optional[float] = None) -> List[MemoryQueryResult]:
+    async def recall(self, query: Optional[str] = None, n_results: int = 5, start_timestamp: Optional[float] = None, end_timestamp: Optional[float] = None, recency_weight: float = 0.15) -> List[MemoryQueryResult]:
         """
         Retrieve memories with combined time filtering and optional semantic search.
 
@@ -1568,11 +1568,12 @@ class HybridMemoryStorage(MemoryStorage):
             n_results: Maximum number of results to return.
             start_timestamp: Optional start time for filtering.
             end_timestamp: Optional end time for filtering.
+            recency_weight: Weight for recency in hybrid scoring (0.0 to 1.0).
 
         Returns:
             List of MemoryQueryResult objects.
         """
-        return await self.primary.recall(query=query, n_results=n_results, start_timestamp=start_timestamp, end_timestamp=end_timestamp)
+        return await self.primary.recall(query=query, n_results=n_results, start_timestamp=start_timestamp, end_timestamp=end_timestamp, recency_weight=recency_weight)
 
     async def recall_memory(self, query: str, n_results: int = 5) -> List[Memory]:
         """Recall memories using natural language time expressions."""
