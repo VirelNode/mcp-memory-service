@@ -25,6 +25,13 @@ from ..models.memory import Memory
 from ..utils.content_splitter import split_content
 from ..utils.hashing import generate_content_hash
 
+# Phase 9H: Graph sync for provenance tracking
+try:
+    from ..storage.graph_sync import get_graph_sync
+    GRAPH_SYNC_ENABLED = True
+except ImportError:
+    GRAPH_SYNC_ENABLED = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -362,10 +369,41 @@ class MemoryService:
                 success, message = await self.storage.store(memory)
 
                 if success:
-                    return {
+                    # Phase 9H: Sync to graph with provenance detection
+                    graph_result = None
+                    if GRAPH_SYNC_ENABLED:
+                        try:
+                            graph_sync = get_graph_sync()
+                            # Find similar memories for provenance
+                            similar_memories = []
+                            try:
+                                similar = await self.storage.search(content[:500], n_results=10)
+                                similar_memories = [
+                                    (m.memory.content_hash, m.relevance_score)
+                                    for m in similar
+                                    if m.memory.content_hash != content_hash
+                                ]
+                            except Exception as e:
+                                logger.debug(f"Could not find similar memories: {e}")
+
+                            graph_result = graph_sync.sync_with_provenance(
+                                content_hash=content_hash,
+                                content=content,
+                                memory_type=memory_type,
+                                created_at=memory.created_at_iso,
+                                similar_memories=similar_memories
+                            )
+                            logger.debug(f"Graph sync result: {graph_result}")
+                        except Exception as e:
+                            logger.warning(f"Graph sync failed (non-fatal): {e}")
+
+                    response = {
                         "success": True,
                         "memory": self._format_memory_response(memory)
                     }
+                    if graph_result:
+                        response["graph_sync"] = graph_result
+                    return response
                 else:
                     return {
                         "success": False,

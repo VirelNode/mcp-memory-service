@@ -101,8 +101,8 @@ class Memory:
                         return datetime.now().timestamp()
 
         def float_to_iso(ts: float) -> str:
-            """Convert float timestamp to ISO string."""
-            return datetime.utcfromtimestamp(ts).isoformat() + "Z"
+            """Convert float timestamp to ISO string in local time."""
+            return datetime.fromtimestamp(ts).isoformat()
 
         # Handle created_at
         if created_at is not None and created_at_iso is not None:
@@ -183,13 +183,13 @@ class Memory:
             self.updated_at_iso = float_to_iso(now)
         
         # Update legacy timestamp field for backward compatibility
-        self.timestamp = datetime.utcfromtimestamp(self.created_at)
+        self.timestamp = datetime.fromtimestamp(self.created_at)
 
     def touch(self):
         """Update the updated_at timestamps to the current time."""
         now = time.time()
         self.updated_at = now
-        self.updated_at_iso = datetime.utcfromtimestamp(now).isoformat() + "Z"
+        self.updated_at_iso = datetime.fromtimestamp(now).isoformat()
 
     @property
     def quality_score(self) -> float:
