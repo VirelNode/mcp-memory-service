@@ -26,13 +26,28 @@ MAX_RELATIONS_PER_MEMORY = 5  # Don't create too many edges
 
 
 class GraphSync:
-    """Handles syncing memories to Kuzu graph with provenance detection."""
-    
+    """Handles syncing memories to Kuzu graph with provenance detection.
+
+    Supports context manager pattern to automatically release DB lock:
+        with GraphSync() as gs:
+            gs.sync_with_provenance(...)
+        # Lock released automatically
+    """
+
     def __init__(self, db_path: str = GRAPH_DB_PATH):
         self.db_path = db_path
         self._db: Optional[kuzu.Database] = None
         self._conn: Optional[kuzu.Connection] = None
-    
+
+    def __enter__(self):
+        """Context manager entry - connection is lazy, so just return self."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit - release the database lock."""
+        self.close()
+        return False  # Don't suppress exceptions
+
     @property
     def conn(self) -> kuzu.Connection:
         """Lazy connection to Kuzu database."""
@@ -40,9 +55,9 @@ class GraphSync:
             self._db = kuzu.Database(self.db_path)
             self._conn = kuzu.Connection(self._db)
         return self._conn
-    
+
     def close(self):
-        """Close database connection."""
+        """Close database connection and release lock."""
         if self._conn:
             self._conn = None
         if self._db:

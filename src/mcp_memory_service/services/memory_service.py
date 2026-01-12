@@ -27,7 +27,7 @@ from ..utils.hashing import generate_content_hash
 
 # Phase 9H: Graph sync for provenance tracking
 try:
-    from ..storage.graph_sync import get_graph_sync
+    from ..storage.graph_sync import GraphSync
     GRAPH_SYNC_ENABLED = True
 except ImportError:
     GRAPH_SYNC_ENABLED = False
@@ -373,26 +373,28 @@ class MemoryService:
                     graph_result = None
                     if GRAPH_SYNC_ENABLED:
                         try:
-                            graph_sync = get_graph_sync()
-                            # Find similar memories for provenance
-                            similar_memories = []
-                            try:
-                                similar = await self.storage.search(content[:500], n_results=10)
-                                similar_memories = [
-                                    (m.memory.content_hash, m.relevance_score)
-                                    for m in similar
-                                    if m.memory.content_hash != content_hash
-                                ]
-                            except Exception as e:
-                                logger.debug(f"Could not find similar memories: {e}")
+                            # Use context manager to release DB lock after sync
+                            with GraphSync() as graph_sync:
+                                # Find similar memories for provenance
+                                similar_memories = []
+                                try:
+                                    similar = await self.storage.search(content[:500], n_results=10)
+                                    similar_memories = [
+                                        (m.memory.content_hash, m.relevance_score)
+                                        for m in similar
+                                        if m.memory.content_hash != content_hash
+                                    ]
+                                except Exception as e:
+                                    logger.debug(f"Could not find similar memories: {e}")
 
-                            graph_result = graph_sync.sync_with_provenance(
-                                content_hash=content_hash,
-                                content=content,
-                                memory_type=memory_type,
-                                created_at=memory.created_at_iso,
-                                similar_memories=similar_memories
-                            )
+                                graph_result = graph_sync.sync_with_provenance(
+                                    content_hash=content_hash,
+                                    content=content,
+                                    memory_type=memory_type,
+                                    created_at=memory.created_at_iso,
+                                    similar_memories=similar_memories
+                                )
+                            # Lock released here after context manager exits
                             logger.debug(f"Graph sync result: {graph_result}")
                         except Exception as e:
                             logger.warning(f"Graph sync failed (non-fatal): {e}")

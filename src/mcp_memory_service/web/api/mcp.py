@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from ..dependencies import get_storage
+from ..dependencies import get_storage, get_memory_service
 from ...utils.hashing import generate_content_hash
 from ...utils.time_parser import parse_time_expression
 from ...config import OAUTH_ENABLED
@@ -191,7 +191,9 @@ async def mcp_endpoint(
             tool_name = request.params.get("name") if request.params else None
             arguments = request.params.get("arguments", {}) if request.params else {}
 
-            result = await handle_tool_call(storage, tool_name, arguments)
+            # Get memory_service for operations that need business logic (like graph_sync)
+            memory_service = get_memory_service(storage)
+            result = await handle_tool_call(storage, tool_name, arguments, memory_service)
 
             response = MCPResponse(
                 id=request.id,
@@ -228,18 +230,16 @@ async def mcp_endpoint(
         return JSONResponse(content=response.model_dump(exclude_none=True))
 
 
-async def handle_tool_call(storage, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def handle_tool_call(storage, tool_name: str, arguments: Dict[str, Any], memory_service=None) -> Dict[str, Any]:
     """Handle MCP tool calls and route to appropriate memory operations."""
-    
+
     if tool_name == "store_memory":
-        from mcp_memory_service.models.memory import Memory
-        
         content = arguments.get("content")
         tags = arguments.get("tags", [])
         memory_type = arguments.get("memory_type")
         metadata = arguments.get("metadata", {})
         client_hostname = arguments.get("client_hostname")
-        
+
         # Ensure metadata is a dict
         if isinstance(metadata, str):
             try:
@@ -248,28 +248,47 @@ async def handle_tool_call(storage, tool_name: str, arguments: Dict[str, Any]) -
                 metadata = {}
         elif not isinstance(metadata, dict):
             metadata = {}
-        
-        # Add client_hostname to metadata if provided
-        if client_hostname:
-            metadata["client_hostname"] = client_hostname
-        
-        content_hash = generate_content_hash(content, metadata)
-        
-        memory = Memory(
-            content=content,
-            content_hash=content_hash,
-            tags=tags,
-            memory_type=memory_type,
-            metadata=metadata
-        )
-        
-        success, message = await storage.store(memory)
-        
-        return {
-            "success": success,
-            "message": message,
-            "content_hash": memory.content_hash if success else None
-        }
+
+        # Use MemoryService for full business logic including graph_sync
+        if memory_service:
+            result = await memory_service.store_memory(
+                content=content,
+                tags=tags,
+                memory_type=memory_type,
+                metadata=metadata,
+                client_hostname=client_hostname
+            )
+            return {
+                "success": result.get("success", False),
+                "message": result.get("error") if not result.get("success") else "Memory stored successfully",
+                "content_hash": result.get("memory", {}).get("content_hash") if result.get("success") else None,
+                "graph_sync": result.get("graph_sync")
+            }
+        else:
+            # Fallback to direct storage (no graph_sync)
+            from mcp_memory_service.models.memory import Memory
+
+            # Add client_hostname to metadata if provided
+            if client_hostname:
+                metadata["client_hostname"] = client_hostname
+
+            content_hash = generate_content_hash(content, metadata)
+
+            memory = Memory(
+                content=content,
+                content_hash=content_hash,
+                tags=tags,
+                memory_type=memory_type,
+                metadata=metadata
+            )
+
+            success, message = await storage.store(memory)
+
+            return {
+                "success": success,
+                "message": message,
+                "content_hash": memory.content_hash if success else None
+            }
     
     elif tool_name == "retrieve_memory":
         query = arguments.get("query")
