@@ -44,6 +44,45 @@ async function loadConfig() {
 }
 
 /**
+ * Sanitize extracted content to remove terminal noise, UI artifacts, and formatting
+ * This prevents noisy auto-generated session summaries
+ */
+function sanitizeExtractedContent(text) {
+    if (!text || typeof text !== 'string') return '';
+
+    return text
+        // Remove ANSI escape codes (terminal colors)
+        .replace(/\x1b\[[0-9;]*m/g, '')
+        .replace(/\u001b\[[0-9;]*m/g, '')
+        // Remove common terminal prompts
+        .replace(/^[\s]*[$>›»]\s*/gm, '')
+        .replace(/^[\s]*>>>\s*/gm, '')  // Python prompts
+        // Remove checkbox artifacts
+        .replace(/[✅✓✔☐☑☒⬜⬛]/g, '')
+        .replace(/\[[ xX]\]/g, '')  // [x], [ ], [X]
+        // Remove MCP/tool error prefixes
+        .replace(/^Error:\s*MCP error[^:]*:/gim, '')
+        .replace(/^MCP error[^:]*:/gim, '')
+        // Remove loading/status messages
+        .replace(/^(Loading|Processing|Waiting|Done|Complete)\.{0,3}\s*$/gim, '')
+        // Remove standalone numbers and indices
+        .replace(/^\d+\s*$/gm, '')
+        // Remove date markers
+        .replace(/^Date:\s*.*$/gim, '')
+        .replace(/^\d{1,2}\.\d{1,2}\.(\d{2,4})?\s*$/gm, '')
+        // Remove markdown formatting
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        // Remove excessive whitespace
+        .replace(/\s{2,}/g, ' ')
+        // Remove lines that are just punctuation or very short
+        .split('\n')
+        .filter(line => line.trim().length > 5 && !/^[-.,:;!?]+$/.test(line.trim()))
+        .join('\n')
+        .trim();
+}
+
+/**
  * Analyze conversation to extract key information
  */
 function analyzeConversation(conversationData) {
@@ -102,7 +141,7 @@ function analyzeConversation(conversationData) {
                     const sentences = msg.content.split(/[.!?]+/);
                     sentences.forEach(sentence => {
                         if (pattern.test(sentence.toLowerCase()) && sentence.length > 20) {
-                            analysis.decisions.push(sentence.trim());
+                            analysis.decisions.push(sanitizeExtractedContent(sentence.trim()));
                         }
                     });
                 }
@@ -123,7 +162,7 @@ function analyzeConversation(conversationData) {
                     const sentences = msg.content.split(/[.!?]+/);
                     sentences.forEach(sentence => {
                         if (pattern.test(sentence.toLowerCase()) && sentence.length > 20) {
-                            analysis.insights.push(sentence.trim());
+                            analysis.insights.push(sanitizeExtractedContent(sentence.trim()));
                         }
                     });
                 }
@@ -147,7 +186,7 @@ function analyzeConversation(conversationData) {
                         const sentences = content.split(/[.!?]+/);
                         sentences.forEach(sentence => {
                             if (pattern.test(sentence.toLowerCase()) && sentence.length > 15) {
-                                analysis.codeChanges.push(sentence.trim());
+                                analysis.codeChanges.push(sanitizeExtractedContent(sentence.trim()));
                             }
                         });
                     }
@@ -169,7 +208,7 @@ function analyzeConversation(conversationData) {
                     const sentences = msg.content.split(/[.!?]+/);
                     sentences.forEach(sentence => {
                         if (pattern.test(sentence.toLowerCase()) && sentence.length > 15) {
-                            analysis.nextSteps.push(sentence.trim());
+                            analysis.nextSteps.push(sanitizeExtractedContent(sentence.trim()));
                         }
                     });
                 }
@@ -183,6 +222,12 @@ function analyzeConversation(conversationData) {
         
         analysis.confidence = Math.min(1.0, totalExtracted / 10); // Max confidence at 10+ items
         
+        // Filter out empty/meaningless entries after sanitization
+        analysis.decisions = analysis.decisions.filter(d => d && d.length > 10);
+        analysis.insights = analysis.insights.filter(i => i && i.length > 10);
+        analysis.codeChanges = analysis.codeChanges.filter(c => c && c.length > 10);
+        analysis.nextSteps = analysis.nextSteps.filter(n => n && n.length > 10);
+
         // Limit arrays to prevent overwhelming output
         // Topics: no limit needed (max 10 possible keywords)
         analysis.decisions = analysis.decisions.slice(0, 3);

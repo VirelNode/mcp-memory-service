@@ -300,6 +300,21 @@ function detectStorageBackendFallback(config) {
 }
 
 /**
+ * Format memory age for display (e.g., "today", "3d ago", "2w ago")
+ */
+function getMemoryAge(createdAt) {
+    if (!createdAt) return '';
+    const created = new Date(createdAt);
+    const now = new Date();
+    const days = Math.floor((now - created) / (1000 * 60 * 60 * 24));
+    if (days === 0) return 'today';
+    if (days === 1) return 'yesterday';
+    if (days < 7) return `${days}d ago`;
+    if (days < 30) return `${Math.floor(days / 7)}w ago`;
+    return `${Math.floor(days / 30)}mo ago`;
+}
+
+/**
  * Query memory service using code execution (token-efficient)
  */
 async function queryMemoryServiceViaCode(query, config) {
@@ -631,6 +646,33 @@ async function executeSessionStart(context) {
             } else if (sourceDisplayMode === 'icon-only') {
                 console.log(`${CONSOLE_COLORS.CYAN}💾 Storage${CONSOLE_COLORS.RESET} ${CONSOLE_COLORS.DIM}→${CONSOLE_COLORS.RESET} ${storageInfo.icon} ${storageInfo.backend}`);
             }
+        }
+
+        // === CLAUDE FEEDBACK SURFACING ===
+        // Surface any feedback Claude has flagged for Joe's attention
+        try {
+            if (memoryClient && verbose && !cleanMode) {
+                const feedbackMemories = await memoryClient.queryMemoriesByTagsAndTime(
+                    ['claude-feedback'],
+                    'last-month',
+                    5,
+                    false
+                );
+
+                if (feedbackMemories && feedbackMemories.length > 0) {
+                    console.log(`${CONSOLE_COLORS.YELLOW}⚡ Claude Feedback${CONSOLE_COLORS.RESET} ${CONSOLE_COLORS.DIM}→${CONSOLE_COLORS.RESET} ${CONSOLE_COLORS.BOLD}${feedbackMemories.length}${CONSOLE_COLORS.RESET} item(s) flagged for attention`);
+
+                    feedbackMemories.forEach(mem => {
+                        const firstLine = (mem.content || '').split('\n')[0];
+                        const title = firstLine.replace(/^#\s*/, '').substring(0, 60);
+                        const age = getMemoryAge(mem.created_at);
+                        const truncated = firstLine.length > 60 ? '...' : '';
+                        console.log(`${CONSOLE_COLORS.YELLOW}   💬${CONSOLE_COLORS.RESET} ${title}${truncated} ${CONSOLE_COLORS.DIM}(${age})${CONSOLE_COLORS.RESET}`);
+                    });
+                }
+            }
+        } catch (feedbackErr) {
+            // Silently skip if feedback query fails - non-critical feature
         }
 
         // Display version information
