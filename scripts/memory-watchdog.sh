@@ -85,8 +85,44 @@ notify_failure() {
     fi
 }
 
+cleanup_duplicate_processes() {
+    # Kill any memory service processes NOT owned by systemd.
+    # Codex/agent sessions can spawn duplicates that eat ~1.5GB VRAM each.
+    local systemd_pid
+    systemd_pid=$(systemctl --user show "$SERVICE_NAME" -p MainPID --value 2>/dev/null || echo "0")
+    local killed=0
+    local my_pid=$$
+
+    local pids
+    pids=$(pgrep -f "mcp.memory.service|mcp_memory_service" 2>/dev/null || true)
+
+    if [ -z "$pids" ]; then
+        return 0
+    fi
+
+    for pid in $pids; do
+        [ "$pid" = "$systemd_pid" ] && continue
+        [ "$pid" = "$my_pid" ] && continue
+        kill "$pid" 2>/dev/null && killed=$((killed + 1)) || true
+    done
+
+    if [ "$killed" -gt 0 ]; then
+        sleep 1
+        pids=$(pgrep -f "mcp.memory.service|mcp_memory_service" 2>/dev/null || true)
+        for pid in $pids; do
+            [ "$pid" = "$systemd_pid" ] && continue
+            [ "$pid" = "$my_pid" ] && continue
+            kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+        done
+        log "Killed $killed duplicate memory-service process(es) (~$((killed * 1500))MB VRAM freed)"
+    fi
+}
+
 main() {
     log "Starting health check..."
+
+    # Check 0: Kill duplicate memory service processes (VRAM protection)
+    cleanup_duplicate_processes
 
     # Check 1: Is service running?
     if ! check_service_running; then
